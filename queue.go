@@ -85,7 +85,10 @@ type MQueue struct {
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	jobs    chan Payload
-	timers  []*time.Timer
+	// timers 跟踪在途的重试定时器，便于 Stop 时统一取消。
+	// 以自增 id 为键，定时器触发后据 id 自我移除，避免长时间运行时无限增长。
+	timers   map[uint64]*time.Timer
+	timerSeq uint64
 
 	// err 收集链式调用（UseRedis/UseLevelDb 等）过程中产生的错误，
 	// 在 StartWorkers 时统一返回。
@@ -396,6 +399,7 @@ func (r *MQueue) StartWorkers(workerNum int) error {
 	r.started = true
 	r.ctx, r.cancel = context.WithCancel(context.Background())
 	r.jobs = make(chan Payload, workerNum*2)
+	r.timers = make(map[uint64]*time.Timer)
 
 	// 先恢复持久化消息（重新投递回驱动），再启动消费者，避免重复消费。
 	r.recoverPersistentMessages()
@@ -630,7 +634,17 @@ func (r *MQueue) scheduleRetry(job Payload) {
 	delay := r.backoff(job.Retry)
 	r.logger.Printf("job %s failed, retry %d/%d in %s", job.ID, job.Retry, job.MaxRetry, delay)
 
+	// 在锁内创建并登记定时器，使其 id 在 removeTimer 之前已就绪，
+	// 同时避免在回调里引用定时器变量本身（否则会与赋值形成数据竞争）。
+	r.mu.Lock()
+	if !r.started {
+		r.mu.Unlock()
+		return
+	}
+	id := r.timerSeq
+	r.timerSeq++
 	t := time.AfterFunc(delay, func() {
+		defer r.removeTimer(id)
 		if r.ctx.Err() != nil {
 			return
 		}
@@ -638,13 +652,14 @@ func (r *MQueue) scheduleRetry(job Payload) {
 			r.logger.Printf("failed to requeue job %s: %v", job.ID, err)
 		}
 	})
+	r.timers[id] = t
+	r.mu.Unlock()
+}
 
+// removeTimer 在重试定时器触发后据 id 将其从在途集合中移除。
+func (r *MQueue) removeTimer(id uint64) {
 	r.mu.Lock()
-	if r.started {
-		r.timers = append(r.timers, t)
-	} else {
-		t.Stop()
-	}
+	delete(r.timers, id)
 	r.mu.Unlock()
 }
 
