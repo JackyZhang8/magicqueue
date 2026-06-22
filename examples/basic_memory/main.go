@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	MagicQueue "github.com/JackyZhang8/MagicQueue"
+	MagicQueue "github.com/JackyZhang8/magicqueue"
 )
 
 // GreetTask 是一个简单的业务任务。

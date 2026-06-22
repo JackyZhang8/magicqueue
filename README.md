@@ -1,7 +1,7 @@
 # MagicQueue
 
-[![CI](https://github.com/JackyZhang8/MagicQueue/actions/workflows/ci.yml/badge.svg)](https://github.com/JackyZhang8/MagicQueue/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/JackyZhang8/MagicQueue.svg)](https://pkg.go.dev/github.com/JackyZhang8/MagicQueue)
+[![CI](https://github.com/JackyZhang8/magicqueue/actions/workflows/ci.yml/badge.svg)](https://github.com/JackyZhang8/magicqueue/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/JackyZhang8/magicqueue.svg)](https://pkg.go.dev/github.com/JackyZhang8/magicqueue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 MagicQueue is a lightweight Go message-queue library with pluggable drivers
@@ -47,7 +47,7 @@ MagicQueue 提供三种语言实现，**API 与语义对齐**（三档优先级�
 ## 安装 / Install
 
 ```bash
-go get github.com/JackyZhang8/MagicQueue
+go get github.com/JackyZhang8/magicqueue
 ```
 
 要求 Go 1.22+。Redis 驱动基于 [`github.com/redis/go-redis/v9`](https://github.com/redis/go-redis)。

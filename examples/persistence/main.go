@@ -14,7 +14,7 @@ import (
 	"os"
 	"time"
 
-	MagicQueue "github.com/JackyZhang8/MagicQueue"
+	MagicQueue "github.com/JackyZhang8/magicqueue"
 )
 
 const dbPath = "./data/persistence_example.db"

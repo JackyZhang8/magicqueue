@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	MagicQueue "github.com/JackyZhang8/MagicQueue"
+	MagicQueue "github.com/JackyZhang8/magicqueue"
 )
 
 type genericHandler struct {

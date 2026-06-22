@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	MagicQueue "github.com/JackyZhang8/MagicQueue"
+	MagicQueue "github.com/JackyZhang8/magicqueue"
 )
 
 type FlakyTask struct {

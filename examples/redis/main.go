@@ -9,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	MagicQueue "github.com/JackyZhang8/MagicQueue"
+	MagicQueue "github.com/JackyZhang8/magicqueue"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -1,4 +1,4 @@
-module github.com/JackyZhang8/MagicQueue
+module github.com/JackyZhang8/magicqueue
 
 go 1.22
 
