@@ -1,330 +1,302 @@
 # MagicQueue
 
-MagicQueue is a powerful Go queue library that provides reliable message queue functionality with persistent storage and automatic recovery mechanisms. It supports both Redis and in-memory queues, with LevelDB for persistent storage, ensuring automatic recovery of unprocessed messages in case of system crashes or abnormal exits.
+[![CI](https://github.com/JackyZhang8/MagicQueue/actions/workflows/ci.yml/badge.svg)](https://github.com/JackyZhang8/MagicQueue/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/JackyZhang8/MagicQueue.svg)](https://pkg.go.dev/github.com/JackyZhang8/MagicQueue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-MagicQueue 是一个强大的 Go 语言队列库，提供可靠的消息队列功能，支持持久化存储和自动恢复机制。它支持 Redis 和内存队列两种实现，并使用 LevelDB 作为持久化存储，确保在系统崩溃或异常退出时能够自动恢复未处理的消息。
+MagicQueue is a lightweight Go message-queue library with pluggable drivers
+(Redis / in-memory), optional LevelDB persistence for crash recovery, automatic
+retries with exponential backoff, an optional dead-letter queue, and graceful
+shutdown.
 
-## Features
+MagicQueue 是一个轻量的 Go 消息队列库：支持可插拔驱动（Redis / 内存）、基于
+LevelDB 的持久化与崩溃恢复、带指数退避的自动重试、可选死信队列，以及优雅关闭。
 
-- Multiple queue implementations:
-  - High-performance Redis queue
-  - Fast in-memory queue for testing or small workloads
-- Persistent storage using LevelDB for fault tolerance
-- Support for message grouping and topics
-- Automatic retry mechanism
-- Concurrent processing capability
-- Elegant chainable API
-- Exception recovery mechanism
-- Periodic queue statistics reporting
+> **交付语义**：at-least-once（至少一次）。消息可能被重复投递（例如崩溃恢复后），
+> 因此**处理器应保证幂等**。
 
-## 特性
+## 多语言版本 / Language Versions
 
-- 多种队列实现：
-  - 使用 Redis 作为高性能消息队列
-  - 快速的内存队列，适用于测试或小规模工作负载
-- LevelDB 持久化存储，支持故障恢复
-- 支持消息分组和主题
-- 自动重试机制
-- 并发处理能力
-- 优雅的链式调用 API
-- 异常恢复机制
-- 定时队列统计报告
+MagicQueue 提供三种语言实现，**API 与语义对齐**（三档优先级、批量入队、多 key `BLPOP`、
+持久化与崩溃恢复、指数退避重试、死信队列、优雅关闭，均为 at-least-once）。差异仅在各自生态的
+惯用法与持久化后端：
 
-## 安装
+| 语言 | 仓库 / 目录 | 安装 | 内存驱动 | Redis 客户端 | 持久化后端 | 并发模型 |
+|------|------------|------|----------|--------------|------------|----------|
+| **Go**（本仓库） | `github.com/JackyZhang8/MagicQueue` | `go get github.com/JackyZhang8/MagicQueue` | 内置 | [`go-redis/v9`](https://github.com/redis/go-redis) | [LevelDB](https://github.com/syndtr/goleveldb) | goroutine + channel |
+| **Rust** | `magicqueue-rs/`（crate `magicqueue`） | `cargo add magicqueue` | 内置 | [`redis`](https://crates.io/crates/redis) | [`sled`](https://crates.io/crates/sled) | 线程 + crossbeam channel |
+| **Python** | `magicqueue-py/`（包 `magicqueue`） | `pip install magicqueue`（Redis：`pip install "magicqueue[redis]"`） | 内置 | [`redis-py`](https://github.com/redis/redis-py) | 标准库 `sqlite3` | `threading` + `queue.Queue` |
+
+> 持久化后端按各语言生态选择无 C 依赖的方案：Go→LevelDB、Rust→sled、Python→sqlite3。
+> 三个版本均自带 README、示例、单元/集成测试与 GitHub Actions CI。
+
+## Features / 特性
+
+- 可插拔驱动：生产用 **Redis**（多 key `BLPOP` 阻塞消费，无 `LLEN+LPOP` 轮询空转），开发/测试用 **内存** 队列
+- **消息优先级**：高 / 普通 / 低三档（`Payload.Priority` 按符号映射），同档 FIFO
+- **批量入队** `EnqueueBatch`：Redis 用 pipeline、LevelDB 用批量写，单次往返提交多条
+- **LevelDB 持久化**：进程崩溃后自动恢复未确认的消息
+- **自动重试**：指数退避 + 抖动，重试不阻塞 worker
+- **死信队列（DLQ）**：重试耗尽的消息可转入死信队列而非丢弃
+- 多 topic / group 路由，并发 worker 池
+- **优雅关闭**：`Stop()` 等待在途任务完成并释放资源
+- panic 恢复与自定义回调
+- 可注入 **自定义 Logger**
+- 定时队列统计
+
+## 安装 / Install
 
 ```bash
 go get github.com/JackyZhang8/MagicQueue
 ```
 
-## 快速开始
+要求 Go 1.22+。Redis 驱动基于 [`github.com/redis/go-redis/v9`](https://github.com/redis/go-redis)。
 
-### 1. 基本使用
-
-```go
-package main
-
-import (
-    "github.com/go-redis/redis"
-    "MagicQueue"
-)
-
-func main() {
-    // 使用 Redis 队列
-    rdb := redis.NewClient(&redis.Options{
-        Addr: "localhost:6379",
-        Password: "",
-        DB: 0,
-    })
-
-    queue := MagicQueue.NewQueue("my_queue").
-        UseRedis(rdb).
-        UseLevelDb("./data/queue.db")
-
-    // 或者使用内存队列
-    memoryQueue := MagicQueue.NewQueue("my_queue").
-        UseMemory(nil).  // 使用默认配置
-        UseLevelDb("./data/queue.db")
-
-    // 启动工作者
-    queue.StartWorkers(2)
-}
-```
-
-### 2. 定义任务和处理器
-
-```go
-// 定义任务结构
-type MyTask struct {
-    Name    string `json:"name"`
-    Data    string `json:"data"`
-}
-
-// 实现任务处理器
-type MyHandler struct{}
-
-func (h *MyHandler) Execute(payload *MagicQueue.Payload) *MagicQueue.Result {
-    var task MyTask
-    err := payload.ParseBody(&task)
-    if err != nil {
-        return MagicQueue.NewResult(false, "Failed to parse task", nil)
-    }
-
-    // 处理任务...
-    return MagicQueue.NewResult(true, "Task completed", nil)
-}
-```
-
-### 3. 注册处理器并发送任务
-
-```go
-// 注册处理器
-queue.SetHandler("mytopic", "mygroup", &MyHandler{})
-
-// 发送任务
-task := MyTask{
-    Name: "test",
-    Data: "hello world",
-}
-
-err, id := queue.Enqueue(&MagicQueue.Payload{
-    Topic:     "mytopic",
-    Group:     "mygroup",
-    Body:      task,
-    MaxRetry:  3,
-    IsPersist: true,
-})
-
-if err != nil {
-    log.Printf("Failed to enqueue task: %v", err)
-} else {
-    log.Printf("Task enqueued with ID: %s", id)
-}
-```
-
-## 完整示例
-
-查看 [examples/main.go](examples/main.go) 获取完整的示例代码，包括：
-1. Redis 队列示例：展示在生产环境中使用 Redis 作为队列后端
-2. 内存队列示例：展示如何使用内存队列进行开发和测试
-
-以下是邮件队列的简化示例代码：
+## 快速开始 / Quick Start
 
 ```go
 package main
 
 import (
-    "MagicQueue"
+	"log"
+	"time"
+
+	MagicQueue "github.com/JackyZhang8/MagicQueue"
 )
 
-// 定义邮件任务
 type EmailTask struct {
-    To      string `json:"to"`
-    Subject string `json:"subject"`
-    Content string `json:"content"`
+	To      string `json:"to"`
+	Subject string `json:"subject"`
 }
 
-// 实现邮件处理器
 type EmailHandler struct{}
 
-func (h *EmailHandler) Execute(payload *MagicQueue.Payload) *MagicQueue.Result {
-    var task EmailTask
-    err := payload.ParseBody(&task)
-    if err != nil {
-        return MagicQueue.NewQueueResult(false, "Failed to parse task", nil)
-    }
-    // 处理邮件发送...
-    return MagicQueue.NewQueueResult(true, "Email sent", nil)
+func (h *EmailHandler) Execute(p *MagicQueue.Payload) *MagicQueue.Result {
+	var task EmailTask
+	if err := p.ParseBody(&task); err != nil {
+		return MagicQueue.NewResult(false, "parse failed", nil)
+	}
+	log.Printf("sending email to %s", task.To)
+	return MagicQueue.NewResult(true, "sent", nil) // 返回 false 会触发重试
 }
 
 func main() {
-    // 示例 1：使用 Redis 队列（生产环境推荐）
-    redisQueue := MagicQueue.NewQueue("email_service").
-        UseRedis(redisClient).
-        UseLevelDb("./data/queue.db")
-    
-    redisQueue.SetHandler("email", "notification", &EmailHandler{})
-    go redisQueue.StartWorkers(2)
-    
-    // 发送任务到 Redis 队列
-    redisQueue.Enqueue(&MagicQueue.Payload{
-        Topic: "email",
-        Group: "notification",
-        Body:  EmailTask{To: "user@example.com"},
-    })
-    
-    // 示例 2：使用内存队列（开发/测试环境）
-    memoryQueue := MagicQueue.NewQueue("email_service").
-        UseMemory(&MagicQueue.MemoryConfig{
-            MaxQueueSize: 1000, // 可选：设置最大队列大小
-        }).
-        UseLevelDb("./data/queue.db") // 可选：使用 LevelDB 持久化
-    
-    memoryQueue.SetHandler("email", "notification", &EmailHandler{})
-    go memoryQueue.StartWorkers(2)
-    
-    // 发送任务到内存队列
-    memoryQueue.Enqueue(&MagicQueue.Payload{
-        Topic: "email",
-        Group: "notification",
-        Body:  EmailTask{To: "test@example.com"},
-    })
+	// 内存队列（开发/测试）。生产环境改用 UseRedis(client)。
+	queue := MagicQueue.NewQueue("email_service").UseMemory(nil)
+	if err := queue.Err(); err != nil { // 链式配置错误统一在此检查
+		log.Fatal(err)
+	}
+
+	queue.SetHandler("email", "notification", &EmailHandler{})
+
+	if err := queue.StartWorkers(4); err != nil {
+		log.Fatal(err)
+	}
+	defer queue.Stop() // 优雅关闭
+
+	id, err := queue.Enqueue(&MagicQueue.Payload{
+		Topic:    "email",
+		Group:    "notification",
+		Body:     EmailTask{To: "user@example.com", Subject: "Hi"},
+		MaxRetry: 3,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("enqueued %s", id)
+
+	time.Sleep(time.Second)
 }
 ```
 
-## API 文档
+### 使用 Redis（生产推荐）
 
-### NewQueue(name string) *MQueue
-创建新的队列实例。
+```go
+import "github.com/redis/go-redis/v9"
 
-### MQueue 方法
+rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 
-- `UseRedis(client *redis.Client) *MQueue`: 设置 Redis 客户端作为队列实现
-- `UseMemory(config *MemoryConfig) *MQueue`: 使用内存队列实现
-- `UseLevelDb(path string) *MQueue`: 设置 LevelDB 存储路径
-- `SetHandler(topic string, group string, handler Queueable) *MQueue`: 注册消息处理器
-- `StartWorkers(workerNum int)`: 启动工作者处理消息
-- `Enqueue(payload *Payload) (error, string)`: 发送消息到队列
-- `GetQueueSize(topic string, group string) int64`: 获取队列大小
-
-### 队列实现选择
-
-1. **Redis 队列**
-   - 适用于生产环境
-   - 支持分布式部署
-   - 可靠的消息传递
-   - 高性能和可扩展性
-
-2. **内存队列**
-   - 适用于开发和测试环境
-   - 无需额外依赖
-   - 更快的消息处理速度
-   - 重启后消息会丢失（除非使用 LevelDB 持久化）
-
-### 队列统计
-
-MagicQueue 会自动每分钟输出队列统计信息，包括：
-- 每个主题/分组队列的当前消息数量
-- 清晰的统计日志格式
-
-统计信息示例：
-```
-=== Queue Statistics ===
-Queue my_queue_group1::topic1: 42 messages
-Queue my_queue_group2::topic2: 13 messages
-=====================
+queue := MagicQueue.NewQueue("email_service").
+	UseRedis(rdb).                       // 复用你自己的 client（连接池/TLS 等配置保留）
+	UseLevelDb("./data/queue.db")        // 可选：开启持久化
 ```
 
-统计功能会在调用 `StartWorkers()` 时自动启动，无需额外配置。这有助于监控队列的运行状况和及时发现潜在的消息堆积问题。
+> `UseRedis(client)` 会**复用**你传入的 `*redis.Client`，不会丢弃其连接池 / TLS / 超时配置。
+> 若希望由库自行建连，可用 `UseRedisConfig(&MagicQueue.RedisConfig{Addr: ...})`。
 
-### Payload 结构
+## 完整示例 / Examples
+
+`examples/` 目录下有多个可独立运行的示例：
+
+| 目录 | 说明 | 运行 |
+| --- | --- | --- |
+| `examples/basic_memory` | 内存队列最简上手 | `go run ./examples/basic_memory` |
+| `examples/redis` | Redis 驱动 + 复用 client + 持久化 | `go run ./examples/redis` |
+| `examples/retry_deadletter` | 自动重试 + 死信队列 | `go run ./examples/retry_deadletter` |
+| `examples/graceful_shutdown` | 监听信号优雅关闭 | `go run ./examples/graceful_shutdown` |
+| `examples/multiple_handlers` | 同实例多 topic/group | `go run ./examples/multiple_handlers` |
+| `examples/batch_priority` | 批量入队 + 消息优先级 | `go run ./examples/batch_priority` |
+| `examples/persistence` | LevelDB 崩溃恢复 | `go run ./examples/persistence write` 然后 `recover` |
+
+## 架构与数据流 / Architecture
+
+```
+                 Enqueue(payload)
+                        │
+        IsPersist? ─────┼──────────► LevelDB (持久层, 崩溃恢复来源)
+                        ▼
+              QueueDriver (Redis / Memory)      ◄── 投递通道
+                        │
+        consume(BLPOP / Pop) per topic·group
+                        │
+                  jobs channel
+                        │
+            worker pool (N workers)
+                        │
+                handler.Execute()
+            ┌───────────┴───────────┐
+        State=true               State=false
+            │                        │
+   ack: 从 LevelDB 删除      Retry<MaxRetry ? 退避后重投 : (DLQ) + ack
+```
+
+要点：
+- **持久层是恢复的唯一来源**；`driver` 只是投递通道。
+- 启动时 `recoverPersistentMessages` 先把 LevelDB 中未确认的消息重投回 driver，**再**启动消费者，避免与正常消费路径重复处理。
+- 重试通过 `time.AfterFunc` 异步重投，**不会阻塞 worker**；退避为指数 + 抖动。
+- 内存驱动在进程退出后清空；只有开启 LevelDB 且消息 `IsPersist=true` 时才能跨重启恢复。
+
+## API 概览
+
+构造与配置（均可链式调用）：
+
+| 方法 | 说明 |
+| --- | --- |
+| `NewQueue(name) *MQueue` | 创建队列实例 |
+| `UseRedis(client *redis.Client) *MQueue` | 复用调用方的 Redis client |
+| `UseRedisConfig(cfg *RedisConfig) *MQueue` | 由库自建 Redis 驱动 |
+| `UseMemory(cfg *MemoryConfig) *MQueue` | 使用内存驱动（`MaxQueueSize` 控制上限） |
+| `UseLevelDb(path string) *MQueue` | 开启 LevelDB 持久化 |
+| `SetHandler(topic, group, h Queueable) *MQueue` | 注册处理器 |
+| `WithOptions(Options) *MQueue` | 设置重试/统计/死信等运行时选项 |
+| `SetLogger(Logger) *MQueue` | 注入自定义日志 |
+| `RegisterOnInterrupt(RecoveryListener) *MQueue` | 注册 panic 回调 |
+| `Err() error` | 返回链式配置过程中累计的第一个错误 |
+
+运行时：
+
+| 方法 | 说明 |
+| --- | --- |
+| `Enqueue(p *Payload) (string, error)` | 入队，返回消息 ID |
+| `EnqueueBatch(ps []*Payload) ([]string, error)` | 批量入队，返回 ID 列表（顺序一致） |
+| `StartWorkers(n int) error` | 启动 n 个 worker（非阻塞） |
+| `Stop()` | 优雅关闭，等待在途任务并释放资源 |
+| `GetQueueSize(topic, group) int64` | 队列长度 |
+| `GetDeadLetterSize(topic, group) int64` | 死信队列长度 |
+
+> 注意：`Enqueue` 返回值为 `(string, error)`（id 在前、error 在后），符合 Go 惯例。
+
+### Options
+
+```go
+type Options struct {
+	PollInterval     time.Duration // 非阻塞驱动的轮询间隔，默认 200ms
+	StatsInterval    time.Duration // 统计输出间隔，默认 1m；<=0 关闭
+	RetryBaseDelay   time.Duration // 退避基准，默认 500ms
+	RetryMaxDelay    time.Duration // 退避上限，默认 30s
+	EnableDeadLetter bool          // 重试耗尽是否进入死信队列
+}
+```
+
+### Payload / Result
 
 ```go
 type Payload struct {
-    ID        string      `json:"id"`
-    IsPersist bool       `json:"is_persist"`
-    Topic     string     `json:"topic"`
-    Group     string     `json:"group"`
-    Body      interface{} `json:"body"`
-    MaxRetry  int        `json:"max_retry"`
-    Retry     int        `json:"retry"`
+	ID        string      `json:"id"`         // 由 Enqueue 自动生成
+	IsPersist bool        `json:"is_persist"` // 配合 LevelDB 实现崩溃恢复
+	Topic     string      `json:"topic"`      // 必填
+	Group     string      `json:"group"`
+	Body      interface{} `json:"body"`
+	Priority  int64       `json:"priority"`   // >0 高, ==0 普通(默认), <0 低
+	MaxRetry  int         `json:"max_retry"`
+	Retry     int         `json:"retry"`
 }
-```
 
-### Result 结构
-
-```go
 type Result struct {
-    State   bool        `json:"state"`
-    Message string      `json:"message"`
-    Data    interface{} `json:"data"`
+	State   bool        `json:"state"`   // false 触发重试
+	Message string      `json:"message"`
+	Data    interface{} `json:"data"`
 }
+
+func NewResult(state bool, msg string, data interface{}) *Result
 ```
 
-## 最佳实践
+> `NewQueueResult` 仍可用，但已标记为 `Deprecated`，请改用 `NewResult`。
 
-1. **错误处理**
+## 消息优先级 / Priority
+
+优先级分三档，由 `Payload.Priority` 的符号决定，**同档内保持 FIFO**：
+
+| Priority | 档位 | 说明 |
+| --- | --- | --- |
+| `> 0` | 高 | 优先处理 |
+| `0`（零值默认） | 普通 | 大多数消息 |
+| `< 0` | 低 | 后台/可延迟任务 |
+
 ```go
-err, id := queue.Enqueue(&MagicQueue.Payload{...})
-if err != nil {
-    // 处理错误
-}
+queue.Enqueue(&MagicQueue.Payload{Topic: "task", Body: job, Priority: 10})  // 高
+queue.Enqueue(&MagicQueue.Payload{Topic: "task", Body: job})                // 普通(0)
+queue.Enqueue(&MagicQueue.Payload{Topic: "task", Body: job, Priority: -1})  // 低
 ```
 
-2. **重试机制**
+实现：底层把每个逻辑队列拆成三个子队列（key 后缀 `:p2/:p1/:p0`）。
+Redis 端用**多 key `BLPOP`**（`BLPOP key:p2 key:p1 key:p0 timeout`）一次阻塞调用即可
+按优先级取消息，既保证优先级又避免 `LLEN+LPOP` 轮询空转。
+
+## 批量入队 / Batch Enqueue
+
 ```go
-// 设置最大重试次数
-payload := &MagicQueue.Payload{
-    MaxRetry: 3,
-    // ...
-}
+ids, err := queue.EnqueueBatch([]*MagicQueue.Payload{
+	{Topic: "task", Body: a, Priority: 10},
+	{Topic: "task", Body: b},
+	{Topic: "task", Body: c, IsPersist: true},
+})
 ```
 
-3. **持久化**
+- Redis 驱动用 **pipeline** 在一次往返中推送全部消息；
+- 持久化消息通过 LevelDB **批量写**（`leveldb.Batch`）原子落盘；
+- 任一消息校验失败则整体不入队；推送失败会回滚已持久化的条目。
+
+## 自定义 Logger
+
 ```go
-// 启用消息持久化
-payload := &MagicQueue.Payload{
-    IsPersist: true,
-    // ...
-}
+type myLogger struct{}
+func (myLogger) Printf(format string, args ...interface{}) { /* 接入 zap/logrus 等 */ }
+
+queue.SetLogger(myLogger{})
 ```
 
-4. **并发控制**
-```go
-// 根据需求设置合适的工作者数量
-queue.StartWorkers(runtime.NumCPU())
+## 开发 / Development
+
+```bash
+go build ./...
+go vet ./...
+go test -race ./...
+golangci-lint run ./...
 ```
+
+CI 在 GitHub Actions 上运行 gofmt / vet / build / race 测试 / golangci-lint，见 `.github/workflows/ci.yml`。
 
 ## 注意事项
 
-1. 确保 Redis 服务正在运行
-2. 为 LevelDB 存储选择合适的路径并确保有写入权限
-3. 合理设置重试次数和工作者数量
-4. 在生产环境中添加适当的错误处理和日志记录
+1. 处理器需保证**幂等**（at-least-once 语义）。
+2. Redis 模式确保服务可达；LevelDB 路径需有写权限。
+3. 退出前调用 `Stop()` 以避免任务/资源泄漏。
 
-## 许可证
+## License
 
-MIT License
+MIT，详见 [LICENSE](LICENSE)。
 
-Copyright (c) 2025 MagicQueue
+## Author
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-## 作者
-
-Author JackyZhang8
+[JackyZhang8](https://github.com/JackyZhang8)
