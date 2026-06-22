@@ -22,7 +22,6 @@ go.work
 LOCK
 CURRENT
 MANIFEST-*
-LOG*
 
 # IDE files
 .idea/
